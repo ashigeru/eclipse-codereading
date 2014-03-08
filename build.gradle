@@ -1,0 +1,192 @@
+/**
+ * Copyright 2014 ashigeru.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+defaultTasks 'cleanPdeBuild', 'pdeAssemble'
+
+// build target features sort by its build order
+def targetFeatures = [
+    'com.ashigeru.eclipse.codereading.feature',
+]
+def targetDropinName = 'codereading'
+
+def eclipseUrl = System.getProperty('eclipse.download', 'http://archive.eclipse.org/eclipse/downloads/drops/R-3.7.2-201202080800/eclipse-SDK-3.7.2-win32.zip')
+
+def compilerCompliance = '1.6'
+def pdeDirectory = new File(buildDir, 'pde')
+def toolsDirectory = new File(buildDir, 'pde-tools')
+
+task clean << {
+    delete(buildDir)
+}
+
+task cleanPdeBuild() << {
+    description 'Cleanup copy of features/plug-ins.'
+    delete(pdeDirectory)
+}
+
+task cleanPdeTools() << {
+    description 'Cleanup Eclipse PDE for building.'
+    delete(toolsDirectory)
+}
+
+task prepareTools() {
+    description 'Downloads Eclipse PDE for building.'
+    ext.eclipseDirectory = null
+    if (System.getProperty('eclipse.install')) {
+        ext.eclipseDirectory = new File(System.getProperty('eclipse.install'))
+    } else {
+        ext.eclipseDirectory = new File(toolsDirectory, 'eclipse')
+    }
+    outputs.dir eclipseDirectory
+    doLast {
+        mkdir(toolsDirectory)
+        if (eclipseDirectory.exists()) {
+            return
+        }
+        logging.level = LogLevel.INFO
+        def archiveFile = new File(toolsDirectory, 'eclipse.zip')
+        ant.get src: eclipseUrl, dest: archiveFile.absolutePath, verbose: true
+        copy {
+            from zipTree(archiveFile)
+            into toolsDirectory
+        }
+        delete(archiveFile)
+    }
+}
+
+task copySources() {
+    description 'Copies source files into build directory.'
+    ext.pdeBuildDirectory = new File(pdeDirectory, 'build')
+    doLast {
+        delete pdeBuildDirectory
+        copy {
+            from('.') {
+                include 'features/**', 'plugins/**'
+                exclude '*/*/bin/**'
+            }
+            into pdeBuildDirectory
+        }
+    }
+}
+
+task pdeBuild(dependsOn: [prepareTools, copySources]) {
+    description 'Build features/plug-ins.'
+    ext.productionDirectory = new File(copySources.pdeBuildDirectory, 'prod')
+    def eclipseWorking = new File(pdeDirectory, 'eclipse-work')
+    doLast {
+        if (project.prepareTools.eclipseDirectory.isDirectory() == false) {
+            throw new StopExecutionException("Missing Eclipse SDK: ${project.prepareTools.eclipseDirectory}")
+        }
+        def eclipseLauncher = findPlugin('org.eclipse.equinox.launcher')
+        def pdeBuildScript = new File(findPlugin('org.eclipse.pde.build'), 'scripts/build.xml')
+        targetFeatures.each { targetFeature ->
+            logging.captureStandardOutput LogLevel.INFO
+            javaexec {
+                main = 'org.eclipse.equinox.launcher.Main'
+                classpath = files(eclipseLauncher)
+                jvmArgs = [
+                    '-Djava.awt.headless=true',
+                    '-DtopLevelElementType=feature',
+                    '-DtopLevelElementId=' + targetFeature,
+                    '-DbuildLabel=' + productionDirectory.name,
+                    '-DbuildId=prod',
+                    '-DbuildDirectory=' + copySources.pdeBuildDirectory.absolutePath,
+                    '-DbaseLocation=' + prepareTools.eclipseDirectory.absolutePath,
+                    '-DarchivePrefix=eclipse',
+                    '-DcollectingFolder=eclipse',
+                    '-DoutputUpdateJars=true',
+                    '-DskipBase=true',
+                    '-DskipMaps=true',
+                    '-DskipFetch=true',
+                    '-DlogExtension=.log',
+                    '-DjavacDebugInfo=true',
+                    '-DjavacFailOnError=true',
+                    '-DjavacVerbose=true',
+                    '-DjavacSource=' + compilerCompliance,
+                    '-DjavacTarget=' + compilerCompliance,
+                ]
+                args = [
+                    '-data',
+                    new File(eclipseWorking, 'data').absolutePath,
+                    '-configuration',
+                    new File(eclipseWorking, 'configuration').absolutePath,
+                    '-application',
+                    'org.eclipse.ant.core.antRunner',
+                    '-buildfile',
+                    pdeBuildScript.absolutePath,
+                ]
+            }
+        }
+    }
+}
+
+task pdeGatherDropin(dependsOn: pdeBuild) {
+    description 'Gathers contents of Eclipse dropin archive.'
+    ext.pdeDropinDirectory = new File(pdeDirectory, 'dropin')
+    def targetDirectory = new File(pdeDropinDirectory, targetDropinName)
+    doLast {
+        pdeBuild.productionDirectory.listFiles().findAll({ it.name.endsWith('.zip') }).each { archive ->
+            copy {
+                from zipTree(archive)
+                into targetDirectory
+            }
+        }
+        new File(targetDirectory, 'eclipse/features').listFiles().each { f ->
+            extractAndDelete(f)
+        }
+    }
+}
+
+task pdeAssembleDropin(type: Zip, dependsOn: pdeGatherDropin) {
+    description 'Assembles Eclipse dropin archive.'
+    destinationDir = new File(buildDir, 'distributions')
+    archiveName = 'dropin.zip'
+    from pdeGatherDropin.pdeDropinDirectory
+}
+
+task pdeAssemble(dependsOn: [pdeAssembleDropin]) {
+    description 'Assembles features/plug-ins.'
+}
+
+def findPlugin(String name) {
+    def pluginsDir = new File(project.prepareTools.eclipseDirectory, "plugins")
+    if (pluginsDir.isDirectory() == false) {
+        return null
+    }
+    def result = pluginsDir.listFiles().find({ it.name ==~ /${name}_\d+\.\d+\.\d+(\..*)?(\.jar)?/ })
+    if (result == null) {
+        throw new StopExecutionException("Missing ${name} plugin.")
+    }
+    return result
+}
+
+def extractAndDelete(File file) {
+    def dirName = file.name
+    if (dirName.endsWith('.jar')) {
+        dirName = dirName.substring(0, dirName.length() - 4)
+    }
+    def dirPath = new File(file.parentFile, dirName)
+    project.copy {
+        from project.zipTree(file)
+        into dirPath
+    }
+    project.delete(file)
+}
+
+task wrapper(type: Wrapper) {
+    description 'Generates gradlew Command.'
+    gradleVersion '1.11'
+    jarFile '.buildtools/gradlew.jar'
+}

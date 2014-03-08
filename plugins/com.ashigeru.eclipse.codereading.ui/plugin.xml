@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+   <extension
+         point="org.eclipse.core.expressions.definitions">
+      <definition
+            id="com.ashigeru.eclipse.codereading.inEditor">
+         <with
+               variable="activePart">
+            <adapt
+                  type="org.eclipse.ui.IEditorPart">
+            </adapt>
+         </with>
+      </definition>
+   </extension>
+   <extension
+         point="org.eclipse.ui.commands">
+      <category
+            description="Commands for Source Code Reading Support"
+            id="com.ashigeru.eclipse.codereading"
+            name="Code Reading">
+      </category>
+      <command
+            categoryId="com.ashigeru.eclipse.codereading"
+            description="Add source code snippet into log file."
+            id="com.ashigeru.eclipse.codereading.logSnippet"
+            name="Log Code Snippet">
+      </command>
+   </extension>
+   <extension
+         point="org.eclipse.ui.handlers">
+      <handler
+            commandId="com.ashigeru.eclipse.codereading.logSnippet">
+         <class
+               class="com.ashigeru.eclipse.internal.codereading.ui.handlers.LogSnippetHandler"></class>
+         <enabledWhen>
+            <reference
+                  definitionId="com.ashigeru.eclipse.codereading.inEditor">
+            </reference></enabledWhen>
+      </handler>
+   </extension>
+   <extension
+         point="org.eclipse.ui.bindings">
+      <key
+            commandId="com.ashigeru.eclipse.codereading.logSnippet"
+            contextId="org.eclipse.ui.textEditorScope"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+M3+/">
+      </key>
+   </extension>
+   <extension
+         point="org.eclipse.ui.menus">
+      <menuContribution
+            allPopups="false"
+            locationURI="popup:org.eclipse.ui.popup.any?after=additions">
+         <command
+               commandId="com.ashigeru.eclipse.codereading.logSnippet"
+               style="push">
+            <visibleWhen
+                  checkEnabled="true">
+            </visibleWhen>
+         </command>
+      </menuContribution>
+   </extension>
+
+</plugin>
